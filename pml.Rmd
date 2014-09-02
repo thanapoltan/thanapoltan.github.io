@@ -1,0 +1,94 @@
+---
+title: "Human Activity Recognition"
+---
+
+## Executive Summary
+
+The objective is to predict the manner in which they did the exercise contain in "classe" variable with data collected from activity recognition device. We will also apply the prediction model to predict 20 different test cases provided. 
+
+## Read Data into R and load required library
+
+* Load Human Activity Recognition dataset from http://groupware.les.inf.puc-rio.br/har
+
+```{r loaddata, echo = TRUE, cache = TRUE, message=FALSE}
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+library(caret)
+library(rpart)
+library(ggplot2)
+set.seed(12345)
+```
+
+## Data Preprocessing
+
+I will improve quality of the data by filter out low quality variables such as variables with high NAs, ID variables, variables with near zero variance from the dataset.
+
+* filter out non-related ID variables (X, user_name) from datasets.
+* filter out near zero variance variables using `nearZeroVar` indexing.
+* filter out variables with missing data rate higher than 80%. (Note: I avoid impute data in this case because I don't really have much knowledge about the data and imputing them might mislead the analysis.)
+
+```{r prep, echo = TRUE, cache = TRUE, message=FALSE}
+training <- training[,-(1:2)]
+testing <- testing[,-(1:2)]
+nzv <- nearZeroVar(training)
+training <- training[-nzv]
+testing <- testing[-nzv]
+manyNAindex <- which(apply(training, 2, function(x) {sum(is.na(x))}) > 0.8 * dim(training)[1])
+training <- training[-manyNAindex]
+testing <- testing[-manyNAindex]
+```
+
+## Partition Data
+
+I will hold out 20% of the data from training dataset to validate and select the best prediction model.
+
+```{r partition, echo = TRUE, cache = TRUE, message=FALSE}
+vIndex <- createDataPartition(y = training$classe, p = 0.2, list = FALSE)
+validation <- training[vIndex, ]
+training <- training[-vIndex, ]
+```
+
+## Modeling
+
+* I customized `train` control function to perform k-fold cross validation.
+* Because this is classification problem, I fit the data into decision tree models. I would like to try several `train` methods learned from class such as `rpart`, `treebag`, `gbm`, `rf`.
+* Then I perform cross-validation by running the model in the hold out validation dataset and compare misclassification error of each models. Then select the model with least out of sample error as the prediction model.
+
+```{r modeling, echo = TRUE, cache = TRUE, message=FALSE}
+tc <- trainControl(method = "cv", number = 5)
+tree <- train(classe ~ ., method = "rpart", data=training, trControl = tc)
+baggedtree <- train(classe ~ ., method = "treebag", data=training, trControl = tc)
+boostedtree <- train(classe ~ ., method = "gbm", data=training, trControl = tc, verbose = FALSE)
+randomforest <- train(classe ~ ., method = "rf", data=training, trControl = tc, prox = TRUE)
+```
+
+```{r result, echo = TRUE, cache = TRUE, message=FALSE}
+pred1 <- predict(tree, validation)
+pred2 <- predict(baggedtree, validation)
+pred3 <- predict(boostedtree, validation)
+pred4 <- predict(randomforest, validation)
+err1 <- sum(pred1 != validation$classe) / length(pred1)
+err2 <- sum(pred2 != validation$classe) / length(pred2)
+err3 <- sum(pred3 != validation$classe) / length(pred3)
+err4 <- sum(pred4 != validation$classe) / length(pred4)
+compare <- cbind(model=c("tree","bagged tree","boosted tree","random forest"),error=c(err1,err2,err3,err4))
+compare
+```
+
+## Result and Test set prediction
+
+* Based on the out of sample error comparison, I select the random forest model (randomforest) as my prediction model since it yields least misclassification error at almost 0% on the hold out data.
+* Therefore, I run this prediction model on the provided 20 test cases.
+
+```{r predtest, echo = TRUE, cache = TRUE, message=FALSE}
+predtest <- predict(randomforest, testing)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(as.character(predtest))
+predtest
+```
